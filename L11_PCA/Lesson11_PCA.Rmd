@@ -1,0 +1,261 @@
+---
+title: "STAT 505 - Lesson 11 - Principal Component Analysis"
+author: "Ramaa Nathan"
+date: "4/3/2019"
+#output: html_document
+always_allow_html: yes
+output: 
+  github_document:
+    toc: true
+    toc_depth: 4
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(stats)  #for prcomp
+library(tidyverse) #for parsing the data
+library(knitr) # for kable
+library(kableExtra) # for formatting tables
+library(ggplot2) #for plots
+library(gridExtra) #for side by side ggplots
+```
+## Data Exploration
+### Load File 
+```{r loadfile}
+places = read_table("data/places.txt", col_names=c("climate", "housing","health","crime","trans","educate","arts","recreate","econ","id") )
+#str(places)
+```
+
+### Plot histograms 
+```{r plothist}
+ggplot(gather(places[,-10]),aes(value)) +
+  geom_histogram(bins=10) +
+  facet_wrap(~key, scales='free_x')
+```
+
+### Transform to normalize data 
+```{r transform}
+#apply log10 function - we do not need id here.. so remove it.
+#places1 = places %>% select(-id) %>%
+ # mutate_all(log10)
+places1 <- places %>% 
+  mutate_at(vars(-id),log10)
+```
+
+
+### Plot transformed histograms 
+```{r plothist2}
+ggplot(gather(places1[,-10]),aes(value)) +
+  geom_histogram(bins=10) +
+  facet_wrap(~key, scales='free_x')
+```
+
+
+```{r helper_functions}
+formatAsTable <- function(df,title="Title") {
+  #create the header vector
+  table_header = ifelse(has_rownames(df),c(ncol(df)+1),c(ncol(df)))
+  names(table_header)=c(title)
+  #style the table
+  df %>% kable() %>%
+    kable_styling(full_width=F,bootstrap_options=c("bordered")) %>%
+    add_header_above(table_header)
+}
+
+```
+
+## Principal Component Analysis using Covariance Matrix
+### Using princomp
+```{r princomp}
+#get the covariance matrix
+places_cov <- cov(places1[,-10])
+formatAsTable(data.frame(places_cov),"Covariance Matrix")
+
+#compute PCA 
+pr_cov <- princomp(places1[,-10],cor=FALSE,scores=TRUE,fix_sign=TRUE)
+summary(pr_cov)
+
+#eigen values = variance = (pr_cov$sdev)^2
+# create a dataframe with eigen values, differences, variance of proportion and ciumulative proportion of variance
+proportionOfVar = data_frame(EigenValue=(pr_cov$sdev)^2,
+                             Difference=EigenValue-lead(EigenValue),
+                             Proportion=EigenValue/sum(EigenValue),
+                             Cumulative=cumsum(EigenValue)/sum(EigenValue))
+formatAsTable(proportionOfVar,"Variances / Eigen Values")
+
+
+#get the loadings - the Eigen Vectors
+eigenVectors = pr_cov$loadings;
+#create a dataframe - only for display purposes
+eigenVectorsDF <- data.frame(matrix(eigenVectors,9,9))
+row.names(eigenVectorsDF) <- unlist(dimnames(eigenVectors)[1])
+colnames(eigenVectorsDF) <- unlist(dimnames(eigenVectors)[2])
+formatAsTable(eigenVectorsDF,"Eigen Vectors")
+
+#Display the scores of the first 10 observations
+pr_cov$scores %>% head(10) %>% formatAsTable(.,"Scores")
+pr_cov_combined <- cbind(places1,pr_cov$scores)
+
+
+```
+
+#### Scatter Plots of the Principal Components - using Covariance Matrix
+```{r scatterplot}
+#Plot the first two principal components
+data.frame(pr_cov_combined) %>% 
+  ggplot(mapping=aes(x=Comp.2,y=Comp.1)) +
+  geom_point() +
+  #geom_text(aes(label=id,hjust=0,vjust=0)) +
+  labs(title = "Principal Component 1 vs 2 - using Covariance matrix") +
+  theme(plot.title = element_text(hjust = 0.5))+
+  xlab("Principal Component 2") +
+  ylab("Principal Component 1") 
+```
+
+#### Scree Plots - using Covariance Matrix
+```{r screeplot}
+proportionOfVar %>% 
+  ggplot(mapping=aes(x=seq(nrow(proportionOfVar)),y=EigenValue))+
+  geom_point()+
+  geom_line()+
+  scale_x_discrete(limits=seq(nrow(proportionOfVar))) +
+  xlab("Principal Component") +
+  labs(title="Scree Plot - using Covariance matrix") +
+  theme(plot.title = element_text(hjust = 0.5)) 
+```
+
+
+#### Variance Explained Plots - using Covariance Matrix
+```{r proportionplot}
+ proportionOfVar %>% 
+  ggplot(mapping=aes(x=seq(nrow(proportionOfVar)))) + 
+  geom_point(aes(y=Proportion,colour="red"))+
+  geom_line(aes(y=Proportion,colour="red"))+
+  geom_point(aes(y=Cumulative,colour="blue"))+
+  geom_line(aes(y=Cumulative,colour="blue"),linetype="dashed")+
+  scale_color_discrete(name="Type",labels=c("Cumulative","Proportion"))+ #legend
+  scale_x_discrete(limits=seq(nrow(proportionOfVar))) + #xlabel
+  xlab("Principal Component") +
+  labs(title="Variance Explained - using Covariance Matrix") +
+  theme(plot.title = element_text(hjust = 0.5)) 
+```
+
+
+#### Correlation between Principal Components and Variables -using Covariance Matrix
+```{r}
+# select only the first three principal components (so ignore column id and all columns named Comp.4 to Comp.9)
+ pr_cov_combined %>% select(-matches("*.[4-9]$"),-id) %>% 
+  cor() %>% as.data.frame() %>% 
+  select(starts_with("Comp")) %>%
+  formatAsTable(.,"Correlation between Principal Components and Variables")
+```
+
+### Using prcomp
+
+```{r prcomp}
+#compute PCA using prcomp - (SVD method)
+#IMPORTANT - when using prcomp, always set center=TRUE to match the results from princomp with covaraince matrix
+pr_cov2 <- prcomp(places1[,-10],scale=FALSE,center=TRUE) 
+
+#eigen values = variance = (pr_cov$sdev)^2
+# create a dataframe with eigen values, differences, variance of proportion and ciumulative proportion of variance
+proportionOfVar = data_frame(EigenValue=(pr_cov2$sdev)^2,
+                             Difference=EigenValue-lead(EigenValue),
+                             Proportion=EigenValue/sum(EigenValue),
+                             Cumulative=cumsum(EigenValue)/sum(EigenValue))
+formatAsTable(proportionOfVar,"Variances / Eigen Values")
+
+
+#get the laodings - the Eigen Vectors
+eigenVectors = pr_cov2$rotation;
+#create a dataframe - only for display purposes
+eigenVectorsDF <- data.frame(matrix(eigenVectors,9,9))
+row.names(eigenVectorsDF) <- unlist(dimnames(eigenVectors)[1])
+colnames(eigenVectorsDF) <- unlist(dimnames(eigenVectors)[2])
+formatAsTable(eigenVectorsDF,"Eigen Vectors")
+
+#Display the scores of the first 10 observations
+pr_cov2$x %>% head(10) %>% formatAsTable(.,"Scores")
+
+```
+
+
+## Principal Component Analysis using Correlation Matrix - Standardized values 
+```{r princompCorr}
+#compute PCA 
+pr_corr <- princomp(places1[,-10],cor=TRUE,scores=TRUE,fix_sign=TRUE)
+summary(pr_corr)
+
+#eigen values = variance = (pr_corr$sdev)^2
+# create a dataframe with eigen values, differences, variance of proportion and ciumulative proportion of variance
+proportionOfVar = data_frame(EigenValue=(pr_corr$sdev)^2,
+                             Difference=EigenValue-lead(EigenValue),
+                             Proportion=EigenValue/sum(EigenValue),
+                             Cumulative=cumsum(EigenValue)/sum(EigenValue))
+formatAsTable(proportionOfVar,"Variances / Eigen Values")
+
+
+#get the laodings - the Eigen Vectors
+eigenVectors = pr_corr$loadings;
+#create a dataframe - only for display purposes
+eigenVectorsDF <- data.frame(matrix(eigenVectors,9,9))
+row.names(eigenVectorsDF) <- unlist(dimnames(eigenVectors)[1])
+colnames(eigenVectorsDF) <- unlist(dimnames(eigenVectors)[2])
+formatAsTable(eigenVectorsDF,"Eigen Vectors")
+
+#Display the scores of the first 10 observations
+pr_corr$scores %>% head(10) %>% formatAsTable(.,"Scores")
+pr_corr_combined <- cbind(places1,pr_corr$scores)
+```
+
+#### Scatter Plots of the Principal Components - using Correlation Matrix
+```{r scatterplotCorr}
+#Plot the first two principal components
+data.frame(pr_corr_combined) %>% 
+  ggplot(mapping=aes(x=Comp.2,y=Comp.1)) +
+  geom_point() +
+  #geom_text(aes(label=id,hjust=0,vjust=0)) +
+  labs(title = "Principal Component 1 vs 2 - using Correlation matrix") +
+  theme(plot.title = element_text(hjust = 0.5))+
+  xlab("Principal Component 2") +
+  ylab("Principal Component 1") 
+```
+
+#### Scree Plots - using Correlation Matrix
+```{r screeplotCorr}
+proportionOfVar %>% 
+  ggplot(mapping=aes(x=seq(nrow(proportionOfVar)),y=EigenValue))+
+  geom_point()+
+  geom_line()+
+  scale_x_discrete(limits=seq(nrow(proportionOfVar))) +
+  xlab("Principal Component") +
+  labs(title="Scree Plot - using Correlation matrix") +
+  theme(plot.title = element_text(hjust = 0.5)) 
+```
+
+
+#### Variance Explained Plots -using Correlation Matrix
+```{r proportionplotCorr}
+ proportionOfVar %>% 
+  ggplot(mapping=aes(x=seq(nrow(proportionOfVar)))) + 
+  geom_point(aes(y=Proportion,colour="red"))+
+  geom_line(aes(y=Proportion,colour="red"))+
+  geom_point(aes(y=Cumulative,colour="blue"))+
+  geom_line(aes(y=Cumulative,colour="blue"),linetype="dashed")+
+  scale_color_discrete(name="Type",labels=c("Cumulative","Proportion"))+ #legend
+  scale_x_discrete(limits=seq(nrow(proportionOfVar))) + #xlabel
+  xlab("Principal Component") +
+  labs(title="Variance Explained - using Correlation Matrix") +
+  theme(plot.title = element_text(hjust = 0.5)) 
+
+```
+
+#### Correlation between Principal Components and Variables - using Correlation Matrix
+```{r corrCorr}
+# select only the first three principal components (so ignore column id and all columns named Comp.4 to Comp.9)
+ pr_corr_combined %>% select(-matches("*.[4-9]$"),-id) %>% 
+  cor() %>% as.data.frame() %>% 
+  select(starts_with("Comp")) %>%
+  formatAsTable(.,"Correlation between Principal Components and Variables")
+```
